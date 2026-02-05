@@ -4,7 +4,6 @@ import local.webterminal.dto.MemberResponse
 import local.webterminal.dto.MemberCreateRequest // Import MemberCreateRequest
 import local.webterminal.service.MemberService
 import org.springframework.web.bind.annotation.*
-import jakarta.validation.Valid // Import for validation
 
 @RestController
 @RequestMapping("/api/members")
@@ -16,7 +15,7 @@ class MemberController(private val memberService: MemberService) {
     }
 
     @PostMapping // New PostMapping for creating a member
-    fun createMember(@Valid @RequestBody request: MemberCreateRequest): MemberResponse {
+    fun createMember(@RequestBody request: MemberCreateRequest): MemberResponse {
         return memberService.createMember(request)
     }
 }

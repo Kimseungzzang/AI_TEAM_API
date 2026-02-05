@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="local.webterminal.Pty4jSimpleTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-02-05T13:08:49" hostname="Kimseungzzang.local" time="3.44">
+  <properties/>
+  <testcase name="testPty4jWithExecutorService()" classname="local.webterminal.Pty4jSimpleTest" time="3.44"/>
+  <system-out><![CDATA[
+============================================================
+Testing pty4j with ExecutorService (like WebSocket handler)
+============================================================
+22:08:49.730 [Test worker] INFO com.pty4j.util.ExtractedNative -- Extracted pty4j native in 6 ms
+Process started: isAlive=true, pid=91079
+[pool-1-thread-1] RECV[16 bytes]: ?[?1034hsh-3.2$ 
+[main] After 1s: isAlive=true
+[Thread-4] SEND: echo HELLO_EXECUTOR\n
+[Thread-4] process.isAlive=true
+[Thread-4] Flush done
+[pool-1-thread-1] RECV[45 bytes]: echo HELLO_EXECUTOR\r\nHELLO_EXECUTOR\r\nsh-3.2$ 
+[main] After response wait: isAlive=true
+RESULT: SUCCESS
+[pool-1-thread-1] Stream closed
+[pool-1-thread-1] Reader loop ended
+TOTAL OUTPUT[61]: ?[?1034hsh-3.2$ echo HELLO_EXECUTOR\r\nHELLO_EXECUTOR\r\nsh-3.2$ 
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,17 @@
+
+=============================================================
+<Testing pty4j with ExecutorService (like WebSocket handler)
+=============================================================
+a22:08:49.730 [Test worker] INFO com.pty4j.util.ExtractedNative -- Extracted pty4j native in 6 ms
+)Process started: isAlive=true, pid=91079
+3[pool-1-thread-1] RECV[16 bytes]: [?1034hsh-3.2$ 
+[main] After 1s: isAlive=true
+'[Thread-4] SEND: echo HELLO_EXECUTOR\n
+ [Thread-4] process.isAlive=true
+[Thread-4] Flush done
+T[pool-1-thread-1] RECV[45 bytes]: echo HELLO_EXECUTOR\r\nHELLO_EXECUTOR\r\nsh-3.2$ 
+)[main] After response wait: isAlive=true
+RESULT: SUCCESS
+ [pool-1-thread-1] Stream closed
+$[pool-1-thread-1] Reader loop ended
+TTOTAL OUTPUT[61]: [?1034hsh-3.2$ echo HELLO_EXECUTOR\r\nHELLO_EXECUTOR\r\nsh-3.2$ 

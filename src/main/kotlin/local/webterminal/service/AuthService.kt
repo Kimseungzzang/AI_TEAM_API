@@ -5,14 +5,12 @@ import local.webterminal.dto.UserRegisterRequest
 import local.webterminal.dto.UserResponse
 import local.webterminal.entity.User
 import local.webterminal.repository.UserRepository
-import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
 @Service
 class AuthService(
-    private val userRepository: UserRepository,
-    private val passwordEncoder: PasswordEncoder
+    private val userRepository: UserRepository
 ) {
 
     @Transactional
@@ -21,10 +19,9 @@ class AuthService(
             throw IllegalArgumentException("Username already exists")
         }
 
-        val encodedPassword = passwordEncoder.encode(request.password)
         val newUser = User(
             username = request.username,
-            password = encodedPassword
+            password = request.password
         )
         val savedUser = userRepository.save(newUser)
         return UserResponse(savedUser.id, savedUser.username)
@@ -35,7 +32,7 @@ class AuthService(
         val user = userRepository.findByUsername(request.username)
             .orElseThrow { IllegalArgumentException("Invalid username or password") }
 
-        if (!passwordEncoder.matches(request.password, user.password)) {
+        if (request.password != user.password) {
             throw IllegalArgumentException("Invalid username or password")
         }
 

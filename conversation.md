@@ -1035,3 +1035,50 @@ user: [?1;2c[Oclaude
 user: [?1;2c[Oclaude
 user: [?1;2c[Oclaude
 user: [?1;2c[Oclaude
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: .
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: ls
+user: TEST_HELLO
+user: echo HELLO_SHELL
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST
+user: echo HELLO_TEST

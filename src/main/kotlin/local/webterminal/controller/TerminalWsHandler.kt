@@ -2,11 +2,12 @@ package local.webterminal.controller
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.node.ObjectNode
 import com.pty4j.PtyProcess
 import com.pty4j.PtyProcessBuilder
 import com.pty4j.WinSize
+import local.webterminal.dto.WsOutMessage
 import local.webterminal.service.ConversationLogger
+import org.slf4j.LoggerFactory
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.TextMessage
 import org.springframework.web.socket.WebSocketSession
@@ -20,15 +21,17 @@ import java.util.regex.Pattern
 class TerminalWsHandler : TextWebSocketHandler() {
 
     companion object {
+        private val LOGGER = LoggerFactory.getLogger(TerminalWsHandler::class.java)
         private val MAPPER = ObjectMapper()
         private const val ATTR_PROCESS = "process"
+        private const val ATTR_PTY_OUTPUT = "ptyOutput"
         private const val ATTR_IOPOOL = "ioPool"
         private const val ATTR_INPUT_BUFFER = "inputBuffer"
         private const val ATTR_LAST_LOGGED = "lastLogged"
         private const val ATTR_OUTPUT_BUFFER = "outputBuffer"
         private const val ATTR_PENDING_ROLE = "pendingRole"
         private const val ATTR_LAST_ROLE_MSG = "lastRoleMsg"
-        private const val ATTR_CLAUDE_READY = "claudeReady"
+        private const val ATTR_CLI_READY = "cliReady"
 
         private val ROLES = listOf(
             "Team Leader", "Planner", "Frontend Engineer", "Backend Engineer", "Designer"
@@ -44,50 +47,93 @@ class TerminalWsHandler : TextWebSocketHandler() {
             out = OSC_ST_PATTERN.matcher(out).replaceAll("")
             return out
         }
+
+        private fun preview(text: String?, limit: Int = 160): String {
+            if (text.isNullOrBlank()) {
+                return ""
+            }
+            val normalized = text.replace("\n", "\\n").replace("\r", "\\r")
+            return if (normalized.length <= limit) normalized else normalized.substring(0, limit) + "..."
+        }
     }
 
 
     override fun afterConnectionEstablished(session: WebSocketSession) {
         val env = HashMap(System.getenv())
-        val process: PtyProcess = PtyProcessBuilder(arrayOf("cmd.exe"))
+        if (env["TERM"].isNullOrBlank()) {
+            env["TERM"] = "xterm-256color"
+        }
+        val isWindows = isWindows()
+        val command = resolveShellCommand(env)
+        val builder = PtyProcessBuilder(command)
             .setEnvironment(env)
+            .setDirectory(System.getProperty("user.home"))
             .setRedirectErrorStream(true)
-            .setInitialColumns(120)
-            .setInitialRows(40)
-            .setWindowsAnsiColorEnabled(true)
-            .setUseWinConPty(true)
-            .start()
+            .setInitialColumns(80)
+            .setInitialRows(24)
+        if (isWindows) {
+            builder.setWindowsAnsiColorEnabled(true)
+            builder.setUseWinConPty(true)
+        }
+        val process: PtyProcess = builder.start()
         val ioPool: ExecutorService = Executors.newFixedThreadPool(2)
+        LOGGER.info(
+            "WS connected: id={}, uri={}, cmd={}, process.isAlive={}, pid={}",
+            session.id,
+            session.uri,
+            command.joinToString(" "),
+            process.isAlive,
+            process.pid()
+        )
         session.attributes[ATTR_PROCESS] = process
+        session.attributes[ATTR_PTY_OUTPUT] = process.outputStream
         session.attributes[ATTR_IOPOOL] = ioPool
         session.attributes[ATTR_INPUT_BUFFER] = StringBuilder()
         session.attributes[ATTR_LAST_LOGGED] = ""
         session.attributes[ATTR_OUTPUT_BUFFER] = StringBuilder()
-        session.attributes[ATTR_PENDING_ROLE] = null
+        // Do not store null in session attributes (ConcurrentHashMap disallows null)
         session.attributes[ATTR_LAST_ROLE_MSG] = HashMap<String, String>()
-        session.attributes[ATTR_CLAUDE_READY] = false
+        session.attributes[ATTR_CLI_READY] = false
 
         ioPool.submit {
             try {
-                process.inputStream.use { `in` ->
-                    val buf = ByteArray(4096)
-                    var read: Int
-                    while ((`in`.read(buf).also { read = it }) != -1 && session.isOpen) {
+                val inputStream = process.inputStream
+                val buf = ByteArray(4096)
+                while (session.isOpen && process.isAlive) {
+                    val read = inputStream.read(buf)
+                    if (read > 0) {
                         val chunk = String(buf, 0, read, StandardCharsets.UTF_8)
                         processAndSendOutput(session, chunk)
+                    } else if (read == -1) {
+                        LOGGER.info("PTY inputStream closed: id={}", session.id)
+                        break
                     }
                 }
-            } catch (ignored: IOException) {
-                // Ignore exception
+                LOGGER.info("Reader loop ended: id={}, session.isOpen={}, process.isAlive={}",
+                    session.id, session.isOpen, process.isAlive)
+            } catch (e: IOException) {
+                LOGGER.info("Reader exception: id={}, error={}", session.id, e.message)
             }
         }
+
+        // auto-test disabled
     }
 
     override fun handleTextMessage(session: WebSocketSession, message: TextMessage) {
         val process = session.attributes[ATTR_PROCESS] as? PtyProcess ?: return
+        LOGGER.info("handleTextMessage: process={}, isAlive={}, outputStream={}",
+            System.identityHashCode(process), process.isAlive, process.outputStream)
 
         val payload = message.payload
         val wsMessage = parseMessage(payload)
+        LOGGER.info(
+            "WS recv: id={}, role={}, type={}, bytes={}, preview={}",
+            session.id,
+            wsMessage?.role ?: "-",
+            wsMessage?.type ?: "-",
+            payload.toByteArray(StandardCharsets.UTF_8).size,
+            preview(payload)
+        )
 
         if (wsMessage != null && "resize" == wsMessage.role) {
             if (wsMessage.data != null) {
@@ -114,14 +160,38 @@ class TerminalWsHandler : TextWebSocketHandler() {
                 input = wsMessage.data
             }
         }
+        if (input == null && payload.trim().startsWith("{")) {
+            try {
+                val node: JsonNode = MAPPER.readTree(payload)
+                val type = if (node.has("type")) node["type"].asText() else ""
+                if (type == "input" && node.has("data")) {
+                    input = node["data"].asText()
+                }
+            } catch (ignored: Exception) {
+                // fall back to raw payload
+            }
+        }
         if (input == null) {
             input = payload
         }
 
-        recordUserInput(session, input)
-        val os = process.outputStream
-        os.write(input!!.toByteArray(StandardCharsets.UTF_8))
-        os.flush()
+        val normalized = normalizeInput(input!!)
+        recordUserInput(session, normalized)
+        val bytes = normalized.toByteArray(StandardCharsets.UTF_8)
+        LOGGER.info(
+            "PTY send: id={}, bytes={}, preview={}",
+            session.id,
+            bytes.size,
+            preview(normalized)
+        )
+        try {
+            val os = process.outputStream
+            os.write(bytes)
+            os.flush()
+            LOGGER.info("Direct write flush: id={}", session.id)
+        } catch (e: Exception) {
+            LOGGER.error("Direct write failed: id={}, error={}", session.id, e.message, e)
+        }
     }
 
     override fun afterConnectionClosed(session: WebSocketSession, status: CloseStatus) {
@@ -129,6 +199,7 @@ class TerminalWsHandler : TextWebSocketHandler() {
         val ioPool = session.attributes[ATTR_IOPOOL] as? ExecutorService
         process?.destroy()
         ioPool?.shutdownNow()
+        LOGGER.info("WS closed: id={}, status={}", session.id, status)
     }
 
     private fun recordUserInput(session: WebSocketSession, payload: String?) {
@@ -153,18 +224,45 @@ class TerminalWsHandler : TextWebSocketHandler() {
         }
     }
 
+    private fun resolveShellCommand(env: Map<String, String>): Array<String> {
+        if (isWindows()) {
+            return arrayOf("cmd.exe")
+        }
+        // Follow pty4j README example
+        return arrayOf("/bin/sh", "-l")
+    }
+
+    private fun isWindows(): Boolean {
+        val osName = System.getProperty("os.name") ?: ""
+        return osName.lowercase().contains("windows")
+    }
+
+    private fun normalizeInput(input: String): String {
+        if (input.isEmpty()) {
+            return input
+        }
+        val normalized = input.replace("\r\n", "\n").replace("\r", "\n")
+        return if (normalized.endsWith("\n")) normalized else normalized + "\n"
+    }
+
     private fun processAndSendOutput(session: WebSocketSession, chunk: String?) {
         if (chunk.isNullOrBlank()) {
             return
         }
 
+        LOGGER.info(
+            "PTY recv: id={}, bytes={}, preview={}",
+            session.id,
+            chunk.toByteArray(StandardCharsets.UTF_8).size,
+            preview(chunk)
+        )
         sendJsonMessage(session, "terminal", chunk)
 
-        val claudeReady = session.attributes[ATTR_CLAUDE_READY] as? Boolean ?: false
-        if (!claudeReady) {
-            if (looksLikeClaudePrompt(chunk)) {
-                session.attributes[ATTR_CLAUDE_READY] = true
-                sendJsonMessage(session, "ready", "true")
+        val cliReady = session.attributes[ATTR_CLI_READY] as? Boolean ?: false
+        if (!cliReady) {
+            if (looksLikeShellPrompt(chunk) || looksLikeClaudePrompt(chunk)) {
+                session.attributes[ATTR_CLI_READY] = true
+                sendJsonMessage(session, "ready", "shell")
             }
         }
 
@@ -278,14 +376,20 @@ class TerminalWsHandler : TextWebSocketHandler() {
         }
     }
 
-    private fun sendJsonMessage(session: WebSocketSession, role: String, data: String) {
-        val node: ObjectNode = MAPPER.createObjectNode()
-        node.put("role", role)
-        node.put("data", data)
+    private fun sendJsonMessage(session: WebSocketSession, type: String, data: String) {
+        val message = WsOutMessage(type = type, data = data)
         try {
-            session.sendMessage(TextMessage(MAPPER.writeValueAsString(node)))
+            val json = MAPPER.writeValueAsString(message)
+            session.sendMessage(TextMessage(json))
+            LOGGER.info(
+                "WS send: id={}, type={}, bytes={}, preview={}",
+                session.id,
+                type,
+                json.toByteArray(StandardCharsets.UTF_8).size,
+                preview(json)
+            )
         } catch (ignored: IOException) {
-            // Ignore exception
+            LOGGER.warn("WS send failed: id={}, msg={}", session.id, ignored.message)
         }
     }
 
@@ -300,6 +404,21 @@ class TerminalWsHandler : TextWebSocketHandler() {
                 chunk.contains("Claude Code v") ||
                 chunk.contains("Try \"") ||
                 chunk.contains("? for shortcuts")
+    }
+
+    private fun looksLikeShellPrompt(chunk: String?): Boolean {
+        if (chunk.isNullOrBlank()) {
+            return false
+        }
+        val cleaned = stripAnsi(chunk).trimEnd()
+        if (cleaned.isEmpty()) {
+            return false
+        }
+        // Common prompts: zsh "%" , bash "$" , root "#", Windows ">"
+        return cleaned.endsWith("%") ||
+                cleaned.endsWith("$") ||
+                cleaned.endsWith("#") ||
+                cleaned.endsWith(">")
     }
 
     private fun parseRoleLine(session: WebSocketSession, line: String?): ParsedRole? {
@@ -338,7 +457,7 @@ class TerminalWsHandler : TextWebSocketHandler() {
             if (text.isBlank() || isSetupEcho(text) || isTrivialText(text) || isGibberish(text)) {
                 return null
             }
-            session.attributes[ATTR_PENDING_ROLE] = null
+            session.attributes.remove(ATTR_PENDING_ROLE)
             return ParsedRole(pendingRole, text)
         }
 
