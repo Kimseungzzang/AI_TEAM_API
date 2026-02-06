@@ -13,17 +13,13 @@ import java.util.concurrent.TimeUnit
 
 @Component
 class TerminalProxyWsHandler(
-    @Value("\${pty.proxy.url:ws://localhost:8090}") private val proxyUrl: String
+    @Value("\${pty.proxy.url:ws://localhost:8091}") private val proxyUrl: String
 ) : TextWebSocketHandler() {
 
     companion object {
         private val LOGGER = LoggerFactory.getLogger(TerminalProxyWsHandler::class.java)
         private val MAPPER = com.fasterxml.jackson.databind.ObjectMapper()
         private const val ATTR_DOWNSTREAM = "downstreamSession"
-        private const val ATTR_SHELL_MATCH = "shellReadyMatchIndex"
-        private const val SHELL_READY_1 = "\r\nThe default interactive shell is now zsh.\r\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\r\nFor more details, please visit https://support.apple.com/kb/HT208050.\r\n"
-        private const val SHELL_READY_2 = "\u001b[?1034h"
-        private const val SHELL_READY_3 = "bash-3.2$ "
         private fun preview(text: String?, limit: Int = 160): String {
             if (text.isNullOrBlank()) {
                 return ""
@@ -43,6 +39,16 @@ class TerminalProxyWsHandler(
             LOGGER.info("WS proxy connected: FRONTEND={}, NODE={}, url={}", session.id, downstream.id, proxyUrl)
             downstream.attributes["upstreamId"] = session.id
             sendJson(session, "ws_ready", "ok")
+            Thread {
+                try {
+                    Thread.sleep(3000)
+                    if (session.isOpen) {
+                        sendJson(session, "shell_ready", "ok")
+                    }
+                } catch (ignored: Exception) {
+                    LOGGER.warn("WS proxy shell_ready delay failed: frontendId={}, error={}", session.id, ignored.message)
+                }
+            }.start()
         } catch (e: Exception) {
             LOGGER.error("WS proxy connect failed: upstream={}, url={}, error={}", session.id, proxyUrl, e.message, e)
             session.close(CloseStatus.SERVER_ERROR)
@@ -78,7 +84,6 @@ class TerminalProxyWsHandler(
                 return
             }
             try {
-                detectShellReady(upstream, session, message.payload)
                 LOGGER.info("WS proxy recv: NODE -> SPRING, frontendId={}, nodeId={}, bytes={}, preview={}", upstream.id, session.id, message.payload.toByteArray().size, preview(message.payload))
                 upstream.sendMessage(message)
                 LOGGER.info("WS proxy send: SPRING -> FRONTEND, frontendId={}, bytes={}, preview={}", upstream.id, message.payload.toByteArray().size, preview(message.payload))
@@ -93,32 +98,6 @@ class TerminalProxyWsHandler(
             }
         }
 
-        private fun detectShellReady(upstream: WebSocketSession, downstream: WebSocketSession, payload: String) {
-            val node = try {
-                MAPPER.readTree(payload)
-            } catch (e: Exception) {
-                return
-            }
-            val type = node.get("type")?.asText() ?: return
-            if (type != "terminal") {
-                downstream.attributes[ATTR_SHELL_MATCH] = 0
-                return
-            }
-            val data = node.get("data")?.asText() ?: ""
-            val current = (downstream.attributes[ATTR_SHELL_MATCH] as? Int) ?: 0
-            val next = when (current) {
-                0 -> if (data == SHELL_READY_1) 1 else 0
-                1 -> if (data == SHELL_READY_2) 2 else 0
-                2 -> if (data == SHELL_READY_3) 3 else 0
-                else -> 0
-            }
-            if (next == 3) {
-                downstream.attributes[ATTR_SHELL_MATCH] = 0
-                sendJson(upstream, "shell_ready", "ok")
-            } else {
-                downstream.attributes[ATTR_SHELL_MATCH] = next
-            }
-        }
     }
 
     private fun sendJson(session: WebSocketSession, type: String, data: String) {

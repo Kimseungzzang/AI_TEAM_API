@@ -8,6 +8,8 @@ import local.webterminal.repository.TeamRepository // Import TeamRepository
 import local.webterminal.repository.UserRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.nio.file.Files
+import java.nio.file.Path
 
 @Service
 class MemberService(
@@ -42,10 +44,34 @@ class MemberService(
         val team = teamRepository.findById(request.teamId)
             .orElseThrow { IllegalArgumentException("Team not found with id: ${request.teamId}") }
 
+        val safeName = request.name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val baseDir = Path.of(System.getProperty("user.dir"), "member-configs")
+        Files.createDirectories(baseDir)
+        val mdPath = baseDir.resolve("$safeName.md").toAbsolutePath().normalize()
+        if (!Files.exists(mdPath)) {
+            val initial = StringBuilder()
+                .append("# ").append(request.name).append('\n')
+                .append('\n')
+                .append("## rule\n")
+                .append("- 첫 시작일 시 인사하기\n")
+                .append("- 대화 내용을 이 md 파일에 기록하기\n")
+                .append('\n')
+            Files.writeString(mdPath, initial.toString())
+        }
+
+        val baseConfig = request.config?.trim().orEmpty()
+        if (baseConfig.isNotBlank()) {
+            val extra = StringBuilder()
+                .append("## config\n")
+                .append(baseConfig)
+                .append('\n')
+            Files.writeString(mdPath, extra.toString(), java.nio.file.StandardOpenOption.APPEND)
+        }
+
         val member = Member(
             name = request.name,
             role = request.role,
-            config = request.config,
+            config = mdPath.toString(),
             team = team
         )
         val savedMember = memberRepository.save(member)
