@@ -28,6 +28,7 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     runtimeOnly 'com.h2database:h2' // For testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.glassfish.tyrus.bundles:tyrus-standalone-client:2.1.4' // WebSocket client for tests
 }
 
 tasks.named('test') {
@@ -37,4 +38,9 @@ tasks.named('test') {
 task runPty4jTest(type: JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'local.webterminal.Pty4jTestKt'
+}
+
+task runCliTest(type: JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'local.webterminal.CliTestKt'
 }

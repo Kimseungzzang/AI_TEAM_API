@@ -101,7 +101,7 @@ function normalizeOutput(cli, stdout) {
   return parseClaudeOutput(stdout);
 }
 
-function runCli(ws, cli, prompt) {
+function runCli(ws, cli, prompt, prefix) {
   const spec = CLI_COMMANDS[cli] || CLI_COMMANDS.claude;
   const cleaned = String(prompt || '').replace(/\r\n/g, '\n').trim();
   if (!cleaned) {
@@ -120,7 +120,7 @@ function runCli(ws, cli, prompt) {
       });
       child.stdin.write(cleaned + '\n');
       child.stdin.end();
-      attachChild(ws, cli, child, null);
+      attachChild(ws, cli, child, null, prefix);
       return;
     }
     const child = spawn('codex', ['exec', '-'], {
@@ -129,10 +129,9 @@ function runCli(ws, cli, prompt) {
       shell: false
     });
     child.stdin.write(cleaned + '\n');
-    child.stdin.end();
-    attachChild(ws, cli, child, null);
-    return;
-  }
+            child.stdin.end();
+            attachChild(ws, cli, child, null, prefix);
+            return;  }
 
   if (isWin) {
     const commandLine = buildWindowsCommand(spec.cmd, spec.args(cleaned));
@@ -140,19 +139,17 @@ function runCli(ws, cli, prompt) {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
       windowsHide: true,
       shell: false
-    });
-    attachChild(ws, cli, child, null);
-    return;
-  }
+          });
+          attachChild(ws, cli, child, null, prefix);
+          return;  }
   const child = spawn(spec.cmd, spec.args(cleaned), {
     env: process.env,
     windowsHide: true,
     shell: false
-  });
-  attachChild(ws, cli, child, null);
-}
-
-function attachChild(ws, cli, child, outPath) {
+        });
+        attachChild(ws, cli, child, null, prefix);
+      }
+function attachChild(ws, cli, child, outPath, prefix) {
   let stdout = '';
   let stderr = '';
 
@@ -180,7 +177,7 @@ function attachChild(ws, cli, child, outPath) {
     if (!output && stdout) output = stdout;
     if (!output && stderr) output = stderr;
     if (!output) output = `[${cli}] (no output, exit ${code})`;
-    ws.send(JSON.stringify({ type: 'terminal', data: output }));
+    ws.send(JSON.stringify({ type: 'terminal', data: prefix + output }));
   });
 }
 
@@ -193,7 +190,7 @@ wss.on('connection', (ws) => {
       payload = null;
     }
     if (payload && payload.type === 'input') {
-      runCli(ws, payload.cli || 'claude', payload.data || '');
+      runCli(ws, payload.cli || 'claude', payload.data || '', payload.prefix || '');
     }
   });
 });

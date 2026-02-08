@@ -18,4 +18,9 @@ class MemberController(private val memberService: MemberService) {
     fun createMember(@RequestBody request: MemberCreateRequest): MemberResponse {
         return memberService.createMember(request)
     }
+
+    @DeleteMapping("/{memberId}")
+    fun deleteMember(@PathVariable memberId: Long) {
+        memberService.deleteMember(memberId)
+    }
 }

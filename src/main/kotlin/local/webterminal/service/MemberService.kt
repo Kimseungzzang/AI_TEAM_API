@@ -1,22 +1,29 @@
 package local.webterminal.service
 
 import local.webterminal.dto.MemberResponse
-import local.webterminal.dto.MemberCreateRequest // Import MemberCreateRequest
-import local.webterminal.entity.Member // Import Member entity
+import local.webterminal.dto.MemberCreateRequest
+import local.webterminal.entity.Member
 import local.webterminal.repository.MemberRepository
-import local.webterminal.repository.TeamRepository // Import TeamRepository
+import local.webterminal.repository.TeamRepository
 import local.webterminal.repository.UserRepository
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.nio.file.Files
-import java.nio.file.Path
+import java.io.File
 
 @Service
 class MemberService(
     private val memberRepository: MemberRepository,
     private val userRepository: UserRepository,
-    private val teamRepository: TeamRepository // Inject TeamRepository
+    private val teamRepository: TeamRepository
 ) {
+    companion object {
+        private val LOGGER = LoggerFactory.getLogger(MemberService::class.java)
+    }
+
+    @Value("\${workspace.base-path:./workspaces}")
+    private lateinit var workspaceBasePath: String
 
     @Transactional(readOnly = true)
     fun getMembersByUsername(username: String): List<MemberResponse> {
@@ -44,19 +51,23 @@ class MemberService(
         val team = teamRepository.findById(request.teamId)
             .orElseThrow { IllegalArgumentException("Team not found with id: ${request.teamId}") }
 
-        val safeName = request.name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val baseDir = Path.of(System.getProperty("user.dir"), "member-configs")
-        Files.createDirectories(baseDir)
-        val mdPath = baseDir.resolve("$safeName.md").toAbsolutePath().normalize()
-        if (!Files.exists(mdPath)) {
+        val safeMemberName = request.name.replace(Regex("[^a-zA-Z0-9가-힣._-]"), "_")
+        val safeTeamName = team.name.replace(Regex("[^a-zA-Z0-9가-힣._-]"), "_")
+
+        // 팀/members 폴더 경로
+        val membersDir = File(workspaceBasePath, "$safeTeamName/members")
+        membersDir.mkdirs()
+
+        // 멤버 config 파일 생성
+        val mdFile = File(membersDir, "$safeMemberName.md")
+        val mdPath = mdFile.canonicalPath
+
+        if (!mdFile.exists()) {
             val initial = StringBuilder()
                 .append("# ").append(request.name).append('\n')
                 .append('\n')
-                .append("## rule\n")
-                .append("- 첫 시작일 시 인사하기\n")
-                .append("- 대화 내용을 이 md 파일에 기록하기\n")
                 .append('\n')
-            Files.writeString(mdPath, initial.toString())
+            mdFile.writeText(initial.toString())
         }
 
         val baseConfig = request.config?.trim().orEmpty()
@@ -65,13 +76,15 @@ class MemberService(
                 .append("## config\n")
                 .append(baseConfig)
                 .append('\n')
-            Files.writeString(mdPath, extra.toString(), java.nio.file.StandardOpenOption.APPEND)
+            mdFile.appendText(extra.toString())
         }
+
+        LOGGER.info("Created member config file: {}", mdPath)
 
         val member = Member(
             name = request.name,
             role = request.role,
-            config = mdPath.toString(),
+            config = mdPath,
             team = team
         )
         val savedMember = memberRepository.save(member)
@@ -81,5 +94,22 @@ class MemberService(
             savedMember.role,
             savedMember.config
         )
+    }
+
+    @Transactional
+    fun deleteMember(memberId: Long) {
+        val member = memberRepository.findById(memberId)
+            .orElseThrow { IllegalArgumentException("Member not found with id: $memberId") }
+        val configPath = member.config
+
+        memberRepository.delete(member)
+
+        if (!configPath.isNullOrBlank()) {
+            val file = File(configPath)
+            if (file.exists()) {
+                val deleted = file.delete()
+                LOGGER.info("Deleted member config file: {}, success={}", configPath, deleted)
+            }
+        }
     }
 }
